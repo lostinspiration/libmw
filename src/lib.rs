@@ -3,59 +3,6 @@
 //!
 //! This allows for the programmer to perform work on the given context both before __and__ after invoking the
 //! next function in the chain.
-//!
-//! # Example
-//! ```no_run
-//! /// Sample freestanding handler function
-//! fn handler_in_func(ctx: &mut dyn PipelineContext, next: Pipeline) -> Result<(), PipelineError> {
-//!   // do work before calling the next handler in the pipe
-//!   println!("before in handler func");
-//!   next.invoke(ctx)?;
-//!
-//!   // do work after the next handler in the pipe returns
-//!   println!("after in handler func");
-//!   
-//!   Ok(())
-//! }
-//!
-//! struct Context {}
-//! impl PipelineContext for Context {
-//! 	fn as_any(&self) -> &dyn Any {
-//! 		self
-//! 	}
-//!
-//! 	fn as_any_mut(&mut self) -> &mut dyn Any {
-//! 		self
-//! 	}
-//! }
-//!
-//! fn main() {
-//!   let mut builder = PipelineBuilder::new();
-//!
-//!   // add freestanding function
-//!   builder.with(handler_in_func);
-//!
-//!   // with closure
-//!   builder.with(|ctx, next| {
-//!     // do work before calling the next handler in the pipe
-//!   	println!("before in closure");
-//!   	next.invoke(ctx)?;
-//!
-//!     // do work after the next handler in the pipe returns
-//!   	println!("after in closure");
-//!
-//!   	Ok(())
-//!   });
-//!   
-//!   // assemble the pipeline
-//!	  let pipeline = builder.assemble();
-//!
-//!	  // create context and call pipeline
-//!	  let mut context = Context { };
-//!	  let result = pipeline.invoke(&mut context);
-//!   // handle result...
-//! }
-//! ```
 #![deny(missing_docs, unsafe_code)]
 
 use std::{any::Any, sync::Arc};
@@ -66,7 +13,13 @@ pub mod prelude {
 	pub use crate::{Pipeline, PipelineBuilder, PipelineContext, PipelineError};
 }
 
-type MiddlewareThunk = fn(ctx: &mut dyn PipelineContext, next: Pipeline) -> Result<(), PipelineError>;
+// these are used in the public api to accept both standalone functions and closures
+type PredicateThunk = fn(&mut dyn PipelineContext) -> bool;
+type BranchThunk = fn(&mut PipelineBuilder);
+type MiddlewareThunk = fn(&mut dyn PipelineContext, Pipeline) -> Result<(), PipelineError>;
+
+// used internally as wrapper closure thunks
+type MiddlewareTraitThunk = Box<dyn Fn(&mut dyn PipelineContext, Pipeline) -> Result<(), PipelineError>>;
 type Thunk = Arc<dyn Fn(&mut dyn PipelineContext) -> Result<(), PipelineError>>;
 
 /// Holder struct that contains a next method in the pipeline
@@ -91,7 +44,7 @@ impl Pipeline {
 /// Error
 #[derive(Error, Debug)]
 pub enum PipelineError {
-    /// Generic pipeline error
+	/// Generic pipeline error
 	#[error("{0}")]
 	Generic(String),
 }
@@ -108,7 +61,7 @@ pub trait PipelineContext {
 /// Pipeline builder structure that holds the list of added middleware as well as providing
 /// ways of interacting with that list
 pub struct PipelineBuilder {
-	middleware: Vec<MiddlewareThunk>,
+	middleware: Vec<MiddlewareTraitThunk>,
 }
 
 impl PipelineBuilder {
@@ -119,11 +72,27 @@ impl PipelineBuilder {
 
 	/// Adds a new [MiddlewareThunk] to the pipeline. This can be a free standing fn or an inline closure
 	pub fn with(&mut self, middleware: MiddlewareThunk) {
-		self.middleware.push(middleware);
+		self.middleware.push(Box::new(middleware));
+	}
+
+	/// Branches the [Pipeline] based on the result of the given [PredicateThunk] with the new 
+	/// set of [PipelineBuilder] instructions
+	pub fn when(&mut self, predicate: PredicateThunk, builder: BranchThunk) {
+		let mut branch_builder = PipelineBuilder::new();
+		builder(&mut branch_builder);
+		let branch = branch_builder.assemble();
+		self.middleware.push(Box::new(move |ctx, next| {
+			if predicate(ctx) {
+				return branch.invoke(ctx);
+			}
+
+			next.invoke(ctx)
+		}));
 	}
 
 	/// Assembles the pipeline giving a single entrypoint to pass a [PipelineContext] in.
-	/// The resulting pipeline object can be cached and run multiple times with different contexts.
+	/// 
+	/// The resulting [Pipeline] object can be cached and run multiple times with different contexts
 	pub fn assemble(self) -> Pipeline {
 		let Self { middleware } = self;
 
@@ -134,8 +103,7 @@ impl PipelineBuilder {
 			if chain.is_none() {
 				chain = Some(Pipeline {
 					next: Some(Arc::new(move |ctx| {
-						mw(ctx, Pipeline { next: None })?;
-						Ok(())
+						mw(ctx, Pipeline { next: None })
 					})),
 				});
 				continue;
@@ -144,12 +112,86 @@ impl PipelineBuilder {
 			let n = chain.take().unwrap().next.take().unwrap();
 			chain = Some(Pipeline {
 				next: Some(Arc::new(move |ctx| {
-					mw(ctx, Pipeline { next: Some(n.clone()) })?;
-					Ok(())
+					mw(ctx, Pipeline { next: Some(n.clone()) })
 				})),
 			});
 		}
 
 		chain.unwrap()
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	struct Context {}
+
+	impl PipelineContext for Context {
+		fn as_any_mut(&mut self) -> &mut (dyn std::any::Any + 'static) {
+			self
+		}
+
+		fn as_any(&self) -> &(dyn std::any::Any + 'static) {
+			self
+		}
+	}
+
+	#[test]
+	fn it_works() {
+		let mut builder = PipelineBuilder::new();
+
+		builder.with(|ctx, next| {
+			println!("before in closure");
+			next.invoke(ctx)?;
+			println!("after in closure");
+
+			Ok(())
+		});
+
+		builder.when(
+			|_ctx| {
+				// return if to run or not
+				true
+			},
+			|builder| {
+				builder.with(|ctx, next| {
+					println!("branch handler 1 before");
+					next.invoke(ctx)?;
+					println!("branch handler 1 after");
+
+					Ok(())
+				});
+
+				builder.with(|ctx, next| {
+					println!("branch handler 2 before");
+					next.invoke(ctx)?;
+					println!("branch handler 2 after");
+
+					Ok(())
+				});
+			},
+		);
+
+		builder.with(|ctx, next| {
+			println!("before in last closure");
+			next.invoke(ctx)?;
+			println!("after in last closure");
+
+			Ok(())
+		});
+
+		let pipeline = builder.assemble();
+		let mut context = Context {};
+		let result = pipeline.invoke(&mut context);
+		match result {
+			Ok(_) => {
+				// handle things in context
+			}
+			Err(e) => {
+				println!("{:#?}", e);
+			}
+		}
+		println!("It did not crash!");
 	}
 }
