@@ -13,7 +13,7 @@ pub mod prelude {
 	pub use crate::{Pipeline, PipelineBuilder, PipelineContext, PipelineError};
 }
 
-// these are used in the public api to accept both standalone functions and closures
+// these are used in the public api to accept both free standing functions and closures
 type PredicateThunk = fn(&mut dyn PipelineContext) -> bool;
 type BranchThunk = fn(&mut PipelineBuilder);
 type MiddlewareThunk = fn(&mut dyn PipelineContext, Pipeline) -> Result<(), PipelineError>;
