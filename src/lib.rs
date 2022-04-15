@@ -5,7 +5,7 @@
 //! next function in the chain.
 #![deny(missing_docs, unsafe_code)]
 
-use std::{any::Any, sync::Arc};
+use std::{any::Any, sync::Arc, error::Error};
 use thiserror::Error;
 
 /// Library prelude to bring in the most used structures and traits
@@ -16,11 +16,11 @@ pub mod prelude {
 // these are used in the public api to accept both free standing functions and closures
 type PredicateThunk = fn(&mut dyn PipelineContext) -> bool;
 type BranchThunk = fn(&mut PipelineBuilder);
-type MiddlewareThunk = fn(&mut dyn PipelineContext, Pipeline) -> Result<(), PipelineError>;
+type MiddlewareThunk = fn(&mut dyn PipelineContext, Pipeline) -> Result<(), Box<dyn Error>>;
 
 // used internally as wrapper closure thunks
-type MiddlewareTraitThunk = Box<dyn Fn(&mut dyn PipelineContext, Pipeline) -> Result<(), PipelineError>>;
-type Thunk = Arc<dyn Fn(&mut dyn PipelineContext) -> Result<(), PipelineError>>;
+type MiddlewareTraitThunk = Box<dyn Fn(&mut dyn PipelineContext, Pipeline) -> Result<(), Box<dyn Error>>>;
+type Thunk = Arc<dyn Fn(&mut dyn PipelineContext) -> Result<(), Box<dyn Error>>>;
 
 /// Holder struct that contains a next method in the pipeline
 pub struct Pipeline {
@@ -30,7 +30,7 @@ pub struct Pipeline {
 impl Pipeline {
 	/// Invoke the assigned next middleware method if exists, otherwise essentially a noop
 	#[must_use]
-	pub fn invoke(&self, ctx: &mut dyn PipelineContext) -> Result<(), PipelineError> {
+	pub fn invoke(&self, ctx: &mut dyn PipelineContext) -> Result<(), Box<dyn Error>> {
 		if self.next.is_none() {
 			return Ok(());
 		}
@@ -125,7 +125,9 @@ impl PipelineBuilder {
 mod tests {
 	use super::*;
 
-	struct Context {}
+	struct Context {
+		take_branch: bool,
+	}
 
 	impl PipelineContext for Context {
 		fn as_any_mut(&mut self) -> &mut (dyn std::any::Any + 'static) {
@@ -150,9 +152,11 @@ mod tests {
 		});
 
 		builder.when(
-			|_ctx| {
-				// return if to run or not
-				true
+			|ctx| {
+				match ctx.as_any().downcast_ref::<Context>(){
+        Some(c) => c.take_branch,
+        None => false,
+    }
 			},
 			|builder| {
 				builder.with(|ctx, next| {
@@ -167,7 +171,8 @@ mod tests {
 					println!("branch handler 2 before");
 					next.invoke(ctx)?;
 					println!("branch handler 2 after");
-
+					
+					// Err(PipelineError::Generic(String::from("Barfed")).into())
 					Ok(())
 				});
 			},
@@ -182,7 +187,22 @@ mod tests {
 		});
 
 		let pipeline = builder.assemble();
-		let mut context = Context {};
+		let mut context = Context {
+			take_branch: true,
+		};
+		let result = pipeline.invoke(&mut context);
+		match result {
+			Ok(_) => {
+				// handle things in context
+			}
+			Err(e) => {
+				println!("{:#?}", e);
+			}
+		}
+
+		let mut context = Context {
+			take_branch: false,
+		};
 		let result = pipeline.invoke(&mut context);
 		match result {
 			Ok(_) => {
