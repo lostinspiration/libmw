@@ -8,7 +8,7 @@ next function in the chain.
 ```rust
 use libmw::prelude::*;
 
-/// Sample freestanding handler function
+/// Sample free standing handler function
 fn standalone_func(ctx: &mut dyn PipelineContext, next: Pipeline) -> Result<(), PipelineError> {
   // do work before calling the next handler in the pipe
   println!("before in handler func");
@@ -20,15 +20,27 @@ fn standalone_func(ctx: &mut dyn PipelineContext, next: Pipeline) -> Result<(), 
   Ok(())
 }
 
-struct Context {}
-impl PipelineContext for Context {
-	fn as_any(&self) -> &dyn Any {
-		self
-	}
+/// Use free standing functions to add additional trait bounds your context implements
+/// for generic handlers that can be shared without needing knowledge of the implemented `PipelineContext`
+fn standalone_func_enhance<CtxType>(ctx: &mut dyn PipelineContext, next: Pipeline) -> Result<(), PipelineError> 
+where:
+  CtxType: PipelineContext + Repeatable + 'static {
+  if let Some(context) = ctx.as_any_mut().downcast_mut::<CtxType>() {
+		while context.repeat() {
+			next.invoke(context)?;
 
-	fn as_any_mut(&mut self) -> &mut dyn Any {
-		self
+			if context.delay() != 0 {
+				std::thread::sleep(std::time::Duration::from_millis(context.delay() as u64));
+			}
+		}
 	}
+  
+  Ok(())
+}
+
+#[derive(PipelineContext)]
+struct Context {
+  take_branch: bool
 }
 
 fn main() {
@@ -37,11 +49,11 @@ fn main() {
   // add freestanding function
   builder.with(standalone_func);
 
-  // branch not taken because the predicate does not return true
-  // if changed to true, nothing added after this branch will run
+  // branch taken depending on how context was created
   builder.when(
-    |_ctx| {
-      false
+    |ctx| match ctx.as_any().downcast_ref::<Context>() {
+      Some(c) => c.take_branch,
+      None => false,
     },
     |builder| {
       builder.with(|ctx, next| {
@@ -78,8 +90,15 @@ fn main() {
   let pipeline = builder.assemble();
 
   // create context and call pipeline
-  let mut context = Context { };
+  let mut context = Context { take_branch: true };
   let result = pipeline.invoke(&mut context);
-  // handle result...
+  match result {
+    Ok(_) -> {
+      // deal with your mutated context
+    }
+    Err(_) => {
+      // handle your pipeline errors
+    }
+  }
 }
 ```

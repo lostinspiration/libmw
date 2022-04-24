@@ -1,0 +1,21 @@
+[package]
+authors = ["Stephen Kichka <skichka@gmail.com>"]
+categories = ["rust-patterns"]
+description = "Library for constructing a pipeline of middleware functions"
+edition = "2021"
+keywords = ["middleware", "chain-of-responsibility"]
+license = "MIT"
+name = "libmw-macro"
+readme = "../README.md"
+repository = "https://github.com/lostinspiration/libmw"
+version = "0.1.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = {version = "1.0"}
+quote = {version = "1.0"}
+syn = {version = "1.0", features = ["full", "extra-traits"]}

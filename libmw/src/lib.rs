@@ -5,12 +5,13 @@
 //! next function in the chain.
 #![deny(missing_docs, unsafe_code)]
 
-use std::{any::Any, sync::Arc, error::Error};
+use std::{any::Any, error::Error, sync::Arc};
 use thiserror::Error;
 
 /// Library prelude to bring in the most used structures and traits
 pub mod prelude {
 	pub use crate::{Pipeline, PipelineBuilder, PipelineContext, PipelineError};
+	pub use libmw_macro::PipelineContext;
 }
 
 // these are used in the public api to accept both free standing functions and closures
@@ -75,7 +76,7 @@ impl PipelineBuilder {
 		self.middleware.push(Box::new(middleware));
 	}
 
-	/// Branches the [Pipeline] based on the result of the given [PredicateThunk] with the new 
+	/// Branches the [Pipeline] based on the result of the given [PredicateThunk] with the new
 	/// set of [PipelineBuilder] instructions
 	pub fn when(&mut self, predicate: PredicateThunk, builder: BranchThunk) {
 		let mut branch_builder = PipelineBuilder::new();
@@ -91,7 +92,7 @@ impl PipelineBuilder {
 	}
 
 	/// Assembles the pipeline giving a single entrypoint to pass a [PipelineContext] in.
-	/// 
+	///
 	/// The resulting [Pipeline] object can be cached and run multiple times with different contexts
 	pub fn assemble(self) -> Pipeline {
 		let Self { middleware } = self;
@@ -102,18 +103,14 @@ impl PipelineBuilder {
 		while let Some(mw) = iter.next() {
 			if chain.is_none() {
 				chain = Some(Pipeline {
-					next: Some(Arc::new(move |ctx| {
-						mw(ctx, Pipeline { next: None })
-					})),
+					next: Some(Arc::new(move |ctx| mw(ctx, Pipeline { next: None }))),
 				});
 				continue;
 			}
 
 			let n = chain.take().unwrap().next.take().unwrap();
 			chain = Some(Pipeline {
-				next: Some(Arc::new(move |ctx| {
-					mw(ctx, Pipeline { next: Some(n.clone()) })
-				})),
+				next: Some(Arc::new(move |ctx| mw(ctx, Pipeline { next: Some(n.clone()) }))),
 			});
 		}
 
@@ -123,20 +120,12 @@ impl PipelineBuilder {
 
 #[cfg(test)]
 mod tests {
+	use libmw_macro::PipelineContext;
 	use super::*;
 
+	#[derive(PipelineContext)]
 	struct Context {
 		take_branch: bool,
-	}
-
-	impl PipelineContext for Context {
-		fn as_any_mut(&mut self) -> &mut (dyn std::any::Any + 'static) {
-			self
-		}
-
-		fn as_any(&self) -> &(dyn std::any::Any + 'static) {
-			self
-		}
 	}
 
 	#[test]
@@ -152,11 +141,9 @@ mod tests {
 		});
 
 		builder.when(
-			|ctx| {
-				match ctx.as_any().downcast_ref::<Context>(){
-        Some(c) => c.take_branch,
-        None => false,
-    }
+			|ctx| match ctx.as_any().downcast_ref::<Context>() {
+				Some(c) => c.take_branch,
+				None => false,
 			},
 			|builder| {
 				builder.with(|ctx, next| {
@@ -171,7 +158,7 @@ mod tests {
 					println!("branch handler 2 before");
 					next.invoke(ctx)?;
 					println!("branch handler 2 after");
-					
+
 					// Err(PipelineError::Generic(String::from("Barfed")).into())
 					Ok(())
 				});
@@ -187,9 +174,7 @@ mod tests {
 		});
 
 		let pipeline = builder.assemble();
-		let mut context = Context {
-			take_branch: true,
-		};
+		let mut context = Context { take_branch: true };
 		let result = pipeline.invoke(&mut context);
 		match result {
 			Ok(_) => {
@@ -200,9 +185,7 @@ mod tests {
 			}
 		}
 
-		let mut context = Context {
-			take_branch: false,
-		};
+		let mut context = Context { take_branch: false };
 		let result = pipeline.invoke(&mut context);
 		match result {
 			Ok(_) => {
