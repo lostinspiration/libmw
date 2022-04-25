@@ -25,15 +25,15 @@ fn standalone_func(ctx: &mut dyn PipelineContext, next: Pipeline) -> Result<(), 
 fn standalone_func_enhance<CtxType>(ctx: &mut dyn PipelineContext, next: Pipeline) -> Result<(), PipelineError> 
 where:
   CtxType: PipelineContext + Repeatable + 'static {
-  if let Some(context) = ctx.as_any_mut().downcast_mut::<CtxType>() {
-		while context.repeat() {
-			next.invoke(context)?;
+    if let Some(context) = ctx.as_any_mut().downcast_mut::<CtxType>() {
+      while context.repeat() {
+      next.invoke(context)?;
 
-			if context.delay() != 0 {
-				std::thread::sleep(std::time::Duration::from_millis(context.delay() as u64));
-			}
-		}
-	}
+      if context.delay() != 0 {
+        std::thread::sleep(std::time::Duration::from_millis(context.delay() as u64));
+      }
+    }
+  }
   
   Ok(())
 }
