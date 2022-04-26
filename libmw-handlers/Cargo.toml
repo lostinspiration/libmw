@@ -1,0 +1,16 @@
+[package]
+authors = ["Stephen Kichka <skichka@gmail.com>"]
+categories = ["rust-patterns"]
+description = "Library for constructing a pipeline of middleware functions"
+edition = "2021"
+keywords = ["middleware"]
+license = "MIT"
+name = "libmw-handlers"
+readme = "../README.md"
+repository = "https://github.com/lostinspiration/libmw"
+version = "0.1.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+libmw = {version = "0.1", path = "../libmw"}

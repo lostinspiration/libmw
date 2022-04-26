@@ -2,5 +2,6 @@
 default-members = ["libmw"]
 members = [
   "libmw",
+  "libmw-handlers",
   "libmw-macro",
 ]
